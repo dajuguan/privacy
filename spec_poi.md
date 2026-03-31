@@ -33,6 +33,8 @@
 设：
 
 * `H` 为电路内统一使用的哈希函数，具体实现取 `Poseidon`
+
+> **实现备注**：使用 `circomlib` 的 `Poseidon(n)` 模板，不同 arity 分别实例化（如 `Poseidon(1)`、`Poseidon(2)`、`Poseidon(3)`、`Poseidon(4)`）。
 * `T` 为 source 保留窗口，对应“最多保留 `T` 个 epoch”
 * `K` 为每个 note 最多保留的 source 数量
 * `MAX_INPUTS` 为单次 `shield_transfer` 电路支持的最大输入 note 数
@@ -42,8 +44,19 @@
 * `root_dep` 为公开 `deposit` Merkle tree 的 root
 * `root_note` 为私有 note commitment tree 的 root
 * `R_blk[e]` 为合规 epoch `e` 下 blacklist 的 commitment root
+* `D_blk` 为 blacklist indexed Merkle tree 深度
 
 对 `circom` 来说，`K`、`MAX_INPUTS`、`MAX_OUTPUTS` 都应视为编译期常量或模板参数。第一版实现可以直接固定成一个具体实例，例如 `K = 16`、`MAX_INPUTS = 2`、`MAX_OUTPUTS = 2`。
+
+各字段的比特宽度约定如下：
+
+* `amount`：128 bits
+* `depositIndex` / `srcId`：64 bits
+* `enterEpoch` / `e_shield` / `e_tx` / `e_now`：64 bits
+* `T`：64 bits
+* `ask` / `rho` / `depositSecret`：64 bits
+
+> **实现备注**：`circom` 中所有涉及大小比较的约束（如 `enterEpoch <= e_tx`、`e_tx - enterEpoch <= T`）都需要使用 `circomlib` 的 `LessThan(n)` / `LessEqThan(n)` 组件，并传入对应的比特宽度参数 `n`。
 
 当前系统中的 protocol-entry source 定义为一次成功 `shield` 的公开来源：
 
@@ -136,6 +149,58 @@ nullifier 定义为：
 
 这样在 `unshield` 时，证明者只需证明自己知道 `ask`，且 note 中的 `ownerCommit = H(ask)`，就可以在不暴露身份的前提下生成唯一 nullifier。
 
+#### 3.4 Non-membership witness 结构
+
+blacklist 使用有序 indexed Merkle tree。每个叶子存储 `(key, nextKey)`，其中 `key` 为已被 blacklist 的 `srcId`，`nextKey` 为排序后的下一个 key（最后一个叶子的 `nextKey` 定义为一个足够大的 sentinel 值，例如 `2^64 - 1`）。
+
+对于某个待证明不在 blacklist 中的 `srcId`，non-membership witness 定义为：
+
+`w_nm = (lowLeafKey, lowLeafNextKey, path_low)`
+
+其中：
+
+* `lowLeafKey` 是 blacklist 中严格小于 `srcId` 的最大 key（即 `lowLeafKey < srcId`）
+* `lowLeafNextKey` 是该叶子记录的下一个 key（即 `srcId < lowLeafNextKey`）
+* `path_low` 是 `H(lowLeafKey, lowLeafNextKey)` 到 `R_blk[e]` 的 Merkle inclusion path，长度为 `D_blk`
+
+`VerifyNonMembership(R_blk[e], srcId, w_nm) = 1` 当且仅当：
+
+1. `lowLeafKey < srcId`
+2. `srcId < lowLeafNextKey`
+3. `path_low` 验证通过，即 `H(lowLeafKey, lowLeafNextKey)` 确实属于 `R_blk[e]`
+
+> **实现备注**：比较操作使用 `circomlib` 的 `LessThan(64)` 组件（因为 `srcId` 为 64 bits）。
+
+#### 3.4.1 备选方案：Sparse Merkle Tree (SMT)
+
+如果希望简化电路逻辑和链上插入成本，可以用 Sparse Merkle Tree 替代 indexed Merkle tree。
+
+SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 64）。每个 `srcId` 对应树中一个固定位置，被 blacklist 的 `srcId` 对应的叶子存储非零值，未被 blacklist 的位置为默认空值 `EMPTY_LEAF = 0`。
+
+在 SMT 方案下，non-membership witness 简化为：
+
+`w_nm = (path_smt)`
+
+其中 `path_smt` 是长度为 64 的 Merkle siblings 数组。
+
+`VerifyNonMembership(R_blk[e], srcId, w_nm) = 1` 当且仅当：
+
+1. 从 `path_smt` 和 `srcId`（作为叶子位置）重算的叶子值为 `EMPTY_LEAF = 0`
+2. 从该叶子和 `path_smt` 重算的 root 等于 `R_blk[e]`
+
+与 indexed Merkle tree 的对比：
+
+| | Indexed Merkle Tree | Sparse Merkle Tree |
+|---|---|---|
+| 非成员证明 | 需找前驱节点 + `LessThan` 比较 | 普通 Merkle inclusion + `IsZero` |
+| 插入 | 2 次 path 更新 | 1 次 path 更新 |
+| 树深度 | `D_blk`（按实际叶子数，通常 20-32） | 固定 64 |
+| 电路 hash 次数 | 较少（树浅） | 较多（树深 64） |
+| 电路额外组件 | 2 × `LessThan(64)` | 1 × `IsZero` |
+| witness 大小 | `lowLeafKey` + `lowLeafNextKey` + path | 仅 path |
+
+两种方案的 `VerifyNonMembership` 接口一致，选择哪种不影响其余电路定义。
+
 ### 4. Option C 的状态语义
 
 定义原始输入 source 列表 `U_raw` 在 epoch `e` 下的活跃过滤：
@@ -198,6 +263,8 @@ nullifier 定义为：
 * `w_nm` 是 `depositIndex` 相对 `R_blk[e_shield]` 的 non-membership witness
 * `rho` 可以直接取 `depositSecret`，也可以由 `depositSecret` 再派生；两者只需在实现时固定一种方式
 
+> **PoC 实现备注**：第一版 PoC 直接取 `rho = depositSecret`，不做额外派生。
+
 关系 `R_shield(x_shield, w_shield) = 1` 当且仅当以下条件同时成立：
 
 1. `ownerCommit = H(ask)`。
@@ -239,6 +306,11 @@ nullifier 定义为：
 
 1. 所有 `inUsed_i`、`outUsed_j`、`sel_{i,j,k}` 都必须是布尔量。
 
+1a. 至少有一个输入和一个输出被实际使用：
+
+   `sum_{i=0}^{MAX_INPUTS-1} inUsed_i >= 1`
+   `sum_{j=0}^{MAX_OUTPUTS-1} outUsed_j >= 1`
+
 2. 对每个输入 `i in {0, ..., MAX_INPUTS-1}`：
 
    * 若 `inUsed_i = 1`，则：
@@ -261,9 +333,13 @@ nullifier 定义为：
      `Slots_i = Pad_K([])`
      该输入的 Merkle path 不参与语义约束
 
+   > **合约侧备注**：当 `inUsed_i = 0` 时 `nf_i = 0`，合约在处理公共输入时必须跳过值为 0 的 nullifier，不得将其加入 nullifier set。同理，`outUsed_j = 0` 时 `noteCommit_out_j = 0`，合约不得将其插入 note commitment tree。
+
 3. 对每个输入 source slot `(i, j)`，定义其是否为活跃真实 source：
 
    `live_{i,j} = inUsed_i AND (srcId_{i,j} != 0) AND (e_tx - enterEpoch_{i,j} <= T)`
+
+   > **边界情况说明**：当 `inUsed_i = 0` 时，所有 `Slots_i` 为 padding（`srcId = 0`），因此 `srcId_{i,j} != 0` 为 false，`live_{i,j}` 必然为 0，无需单独处理。即使 `e_tx <= T` 导致 `e_tx - 0 <= T` 为 true，由于 AND 运算的短路效果，结果仍然是 0。
 
 4. 定义输入 source 的原始拼接列表：
 
@@ -290,6 +366,8 @@ nullifier 定义为：
    * 由于 `Slots_out` 已要求按 `srcId` 严格递增，因此输出中不会出现重复 source
    * 若某个 `srcId` 在多个输入中重复出现，则这些出现必须映射到同一个输出 slot，且 `enterEpoch` 必须一致
 
+   > **说明**：`Consistent(U_raw)` 由 `sel` 映射约束隐式保证——当同一 `srcId` 的多个出现通过 `sel_{i,j,k} = 1` 映射到同一个输出 slot `k` 时，每个出现都被约束为 `enterEpoch_{i,j} = enterEpoch_out_k`，因此它们的 `enterEpoch` 必然一致。无需在电路中单独实现 `Consistent` 检查。
+
 6. 对 `Slots_out` 中每个真实 slot `(srcId_k, enterEpoch_k)`，必须有：
 
    `VerifyNonMembership(R_blk[e_tx], srcId_k, w_nm_k) = 1`
@@ -301,6 +379,8 @@ nullifier 定义为：
 8. 金额守恒：
 
    `amount_in_0 + ... + amount_in_{MAX_INPUTS-1} = amount_out_0 + ... + amount_out_{MAX_OUTPUTS-1}`
+
+   > **实现备注**：所有 `amount_in_i` 和 `amount_out_j` 都需要 range check（128 bits），防止利用素数域 underflow 伪造金额守恒。
 
 9. 对每个输出 `j in {0, ..., MAX_OUTPUTS-1}`：
 
