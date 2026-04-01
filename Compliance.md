@@ -189,9 +189,9 @@ Those are not equivalent when blacklist membership can change over time. Accordi
 
 This option is the stronger long-term architecture if the system wants to support arbitrary transfer depth while preserving compact note state, but it requires a recursive proving stack and a much more precise definition of certificate semantics.
 
-#### Option C: time-bounded POI retention
+#### Option C: time-bounded POI retention with retained-slot strict verification
 
-The third improvement is to retain proof-of-innocence data only for sources that entered the protocol within the last `T` days.
+The third improvement is to prune proof-of-innocence data with a time rule while keeping verification strict over every source that is still retained in the note state.
 
 This construction is different from a bounded `K`-window. The retention rule is anchored to the protocol-entry time of each source, not to transfer depth, note age, or the most recent `K` observed lineage items.
 
@@ -199,52 +199,50 @@ Let each protocol-entry source `s` carry an entry timestamp or entry epoch:
 
 `tau(s) = entry_time(s)`
 
-For a note `n` evaluated at time `t`, define the active compliance source set:
+Define a pruning operator evaluated at transfer time `t`:
 
-`A_T(n, t) = { s in L(n) : t - tau(s) <= T }`
+`Prune_T(U, t) = { s in U : t - tau(s) <= T }`
 
-The note carries a commitment only to the active set, or to a data structure from which the active set can be derived:
+Each note `n` carries a retained compliance source set `R_T(n)` fixed when the note is created:
 
-`C_T(n, t) = CommitActive(A_T(n, t))`
+* For a mint or onramp event with source identifier `s` at time `t`, the created note satisfies:
 
-The compliance statement is then:
-
-> Every protocol-entry source contributing to the note and whose protocol-entry age is at most `T` days is absent from the blacklist committed by the current compliance root.
-
-Equivalently, the prover shows that for all `s in A_T(n, t)`:
-
-`VerifyNonMembership(R_e, s, w_s^nm) = 1`
-
-while sources with `t - tau(s) > T` are no longer required to appear in the active POI set.
-
-State transitions are defined as follows:
-
-* For a mint or onramp event with source identifier `s`, the created note satisfies:
-
-`A_T(n, t) = {s}`
+`R_T(n) = {s}`
 
 * For a transfer consuming `n_1, ..., n_m` and producing `o_1, ..., o_r` at time `t`, each output satisfies:
 
-`A_T(o_j, t) = Prune_T(A_T(n_1, t) union ... union A_T(n_m, t))`
+`R_T(o_j) = Prune_T(R_T(n_1) union ... union R_T(n_m), t)`
 
-where `Prune_T` removes all sources whose entry age exceeds `T`.
+The note carries a commitment to that retained set, or to a data structure from which it can be derived:
+
+`C_ret(n) = CommitRetained(R_T(n))`
+
+The compliance statement is then:
+
+> Every protocol-entry source currently retained in the note state is absent from the blacklist committed by the current compliance root.
+
+Equivalently, the prover shows that for all `s in R_T(n)`:
+
+`VerifyNonMembership(R_e, s, w_s^nm) = 1`
+
+Unlike a pure active-window check, a source whose current age already exceeds `T` can still remain compliance-relevant if it is still retained in the note state. It stops affecting future proofs only after a successful transfer prunes it out of descendant notes.
 
 This construction has the following advantages:
 
-* it prevents indefinite backward contamination
+* it prevents indefinite backward contamination while still pruning state at transfer time
 * it avoids the semantic weakness of a "most recent `K` items" rule
-* it gives a policy-natural interpretation of compliance as a finite observation window
-* it preserves the property that a source blacklisted during its active window continues to block future POI generation for descendant notes
+* it gives a policy-natural interpretation in which pruning is an explicit state-transition rule rather than a verification-time exemption
+* it preserves the property that a source blacklisted after aging beyond `T` still blocks spends of notes that continue to retain it
 
-The soundness statement becomes time-bounded rather than historical:
+The soundness statement becomes retention-bounded rather than fully historical:
 
-* **`T`-bounded soundness**: no efficient prover can produce a valid POI for a note if any protocol-entry source with age at most `T` days is blacklisted in the current compliance root
+* **retained-slot soundness**: no efficient prover can produce a valid POI for a note if any protocol-entry source currently retained in that note is blacklisted in the current compliance root
 
-The completeness statement is likewise time-bounded:
+The completeness statement is likewise retention-bounded:
 
-* **`T`-bounded completeness**: an honest prover can produce a valid POI whenever all protocol-entry sources with age at most `T` days remain non-blacklisted
+* **retained-slot completeness**: an honest prover can produce a valid POI whenever all protocol-entry sources currently retained in the note remain non-blacklisted
 
-This model has an important policy consequence. If a source is first blacklisted only after its entry age exceeds `T`, then that source no longer affects future POI generation. In other words, the system deliberately stops propagating the compliance impact of sufficiently old sources. This is not a bug in the construction; it is the defining policy choice that makes the model scalable.
+This model has an important policy consequence. If a source ages beyond `T` but is still present in an existing note, later blacklisting still blocks POI generation for that note. The source stops affecting future POI generation only after a successful transfer prunes it out of the retained note state. This is a deliberate policy choice: `T` controls which sources are copied forward into newly created notes, not which already-retained slots are exempt from blacklist checking.
 
 To avoid replay or stale-proof issues, this option should be paired with:
 
@@ -252,8 +250,8 @@ To avoid replay or stale-proof issues, this option should be paired with:
 * short-lived proof validity or per-spend proof generation
 * a clear definition of protocol-entry time and its canonical encoding
 
-The main remaining limitation is fan-in. Even with time-bounded retention, a note can still accumulate many active sources inside the `T`-day window. Accordingly, this option is often best combined with one of the following:
+The main remaining limitation is fan-in. Even with time-bounded retention, a note can still accumulate many retained sources that are simultaneously inside the `T`-day pruning window at a transfer boundary. Accordingly, this option is often best combined with one of the following:
 
 * periodic checkpointing or source consolidation
-* bucketed or epoch-level aggregation of active sources
+* bucketed or epoch-level aggregation of retained sources
 * recursive certificate compression as in Option B

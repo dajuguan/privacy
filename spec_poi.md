@@ -12,9 +12,9 @@
 
 1. `ShieldASP`：用户把公开 `deposit` 转成私有 note 时，证明该 `depositIndex` 在当前 ASP blacklist 中为非成员，同时生成携带 POI 元数据的 note。
 2. `shield_transfer`：支持多输入、多输出的私有转账。证明输入 notes 存在、自己拥有这些 notes、输入输出金额守恒，并且所有输出 notes 都正确继承输入 notes 合并后的 source 信息。
-3. `UnshieldPOI`：用户把私有 note 提现回公开地址时，证明该 note 在当前时间窗口内仍然“活跃”的所有 protocol-entry source 都不在当前 blacklist 中。
+3. `UnshieldPOI`：用户把私有 note 提现回公开地址时，证明该 note 当前仍保留在 slots 中的所有 protocol-entry source 都不在当前 blacklist 中。
 
-这里采用 `./Compliance.md` 中的 Option C: time-bounded POI retention。也就是说，系统只要求证明“进入协议时间不超过 `T` 个 epoch 的 source 不在 blacklist 中”，超过窗口的 source 不再继续传播其合规影响。
+这里采用 `./Compliance.md` 中的 Option C: time-bounded POI retention with retained-slot strict verification。也就是说，`T` 只决定哪些 source 会被复制到新创建的 note 中；但对于某个当前 note 里仍然保留着的 source slot，无论它是否已经超过 `T` 个 epoch，只要它还没被 prune 掉，在 `shield_transfer` 或 `unshield` 时都必须证明其不在 blacklist 中。
 
 为了支持多输入、多输出的 `shield_transfer`，每个 note 不再只绑定一个 source，而是绑定一个固定长度为 `K` 的 source 数组。数组不足 `K` 时使用 padding 补齐。
 
@@ -26,7 +26,7 @@
 * 多输入 merge
 * 多输出 split / change note
 
-当前版本仍然不引入更复杂的递归压缩；如果活跃 source 数超过 `K`，电路直接拒绝。
+当前版本仍然不引入更复杂的递归压缩；如果按当前 transfer epoch 过滤后的活跃 source 数超过 `K`，电路直接拒绝。
 
 ### 2. 全局参数与基本对象
 
@@ -203,7 +203,7 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
 
 ### 4. Option C 的状态语义
 
-定义原始输入 source 列表 `U_raw` 在 epoch `e` 下的活跃过滤：
+对一笔在 epoch `e` 执行的 transfer，定义原始输入 source 列表 `U_raw` 的输出保留过滤：
 
 `Active_e(U_raw) = { (s, tau) in U_raw | tau <= e, e - tau <= T }`
 
@@ -222,19 +222,20 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
 这意味着：
 
 1. source 一旦进入协议，就携带其 `enterEpoch`。
-2. 多输入转账时，所有输入 notes 的 source 会先按 concat 方式收集，再去重、过滤掉超过 `T` 个 epoch 的旧 source，最后补齐到 `K` 个 slot。
+2. 多输入转账时，所有输入 notes 的 source 会先按 concat 方式收集，再去重、过滤掉超过 `T` 个 epoch 的旧 source，最后补齐到 `K` 个 slot，作为新输出 notes 的 retained source 数组。
 3. 同一次 `shield_transfer` 创建的所有输出 notes 都继承同一个 canonical source 数组。
-4. 如果某个 source 在活跃窗口内被加入 blacklist，则它会阻止 descendant note 继续 `shield_transfer` 或 `unshield`。
+4. 在 `shield_transfer` 和 `unshield` 时，blacklist 检查作用于当前 note 中所有仍被保留的非 padding source slots，而不只作用于 `Active_e(U_raw)`。
+5. 因此，一个 source 即使已经超过 `T` 个 epoch，只要它仍保留在当前 note 中且尚未被后续成功 transfer prune 掉，就依然可以阻止该 note 继续 `shield_transfer` 或 `unshield`。
 
 这里的 `Canon_e(U_raw)` 主要是语义定义，不要求电路内部真的执行一个通用的 `sort + unique` 算法。
 
 这里特意不按 `enterEpoch` 作为主排序键。原因是：
 
 * `enterEpoch` 不是唯一值，多个 source 完全可能在同一个 epoch 进入协议，因此无法要求它“严格递增”
-* Option C 的语义是“保留所有仍活跃的 source”，而不是“优先保留最新的 source”
+* retained-slot strict 的语义是“新输出只保留仍活跃的 source，但当前 note 已保留的 source 都要接受检查”，而不是“优先保留最新的 source”
 * 如果在 source 数超过 `K` 时按 `enterEpoch` 只保留较新的那些 source，那么语义会从 Option C 退化成一种按新旧裁剪的混合模型
 
-因此当前版本中，`enterEpoch` 只用于判断 source 是否仍然活跃，不用于决定 overflow 时该保留谁；若活跃 source 数超过 `K`，proof 直接失败。
+因此当前版本中，`enterEpoch` 只用于判断 source 在 transfer 时是否仍应被复制到新输出里，不用于决定 overflow 时该保留谁，也不用于豁免当前已保留 slots 的 blacklist 检查；若活跃 source 数超过 `K`，proof 直接失败。
 
 更适合 `circom` 的实现方式是：
 
@@ -290,7 +291,7 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
 
 私有 witness 定义为：
 
-`w_transfer = (note_in_0, ..., note_in_{MAX_INPUTS-1}, Slots_0, ..., Slots_{MAX_INPUTS-1}, path_0, ..., path_{MAX_INPUTS-1}, ask_0, ..., ask_{MAX_INPUTS-1}, amount_out_0, ..., amount_out_{MAX_OUTPUTS-1}, ownerCommit_out_0, ..., ownerCommit_out_{MAX_OUTPUTS-1}, rho_out_0, ..., rho_out_{MAX_OUTPUTS-1}, sel_{i,j,k}, w_nm_0, ..., w_nm_{K-1})`
+`w_transfer = (note_in_0, ..., note_in_{MAX_INPUTS-1}, Slots_0, ..., Slots_{MAX_INPUTS-1}, path_0, ..., path_{MAX_INPUTS-1}, ask_0, ..., ask_{MAX_INPUTS-1}, amount_out_0, ..., amount_out_{MAX_OUTPUTS-1}, ownerCommit_out_0, ..., ownerCommit_out_{MAX_OUTPUTS-1}, rho_out_0, ..., rho_out_{MAX_OUTPUTS-1}, sel_{i,j,k}, w_nm_{i,j})`
 
 其中：
 
@@ -300,7 +301,7 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
 * `path_i` 是输入 `noteCommit_i` 到 `root_note` 的 Merkle inclusion path
 * `ownerCommit_out_j` 是第 `j` 个接收方公钥承诺，不要求发送方知道接收方私钥
 * `sel_{i,j,k} in {0, 1}` 是匹配 selector，表示输入 note `i` 的第 `j` 个 source slot 是否映射到 canonical 输出数组的第 `k` 个 slot
-* `w_nm_k` 只在第 `k` 个输出 source slot 为真实 source 时参与约束
+* `w_nm_{i,j}` 只在第 `i` 个输入 note 的第 `j` 个 source slot 为真实 source 时参与约束
 
 关系 `R_transfer(x_transfer, w_transfer) = 1` 当且仅当以下条件同时成立：
 
@@ -345,7 +346,7 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
 
    `U_raw = Concat(RealSlots(Slots_0), ..., RealSlots(Slots_{MAX_INPUTS-1}))`
 
-   在固定上界实现里，这等价于把所有满足 `live_{i,j} = 1` 的 slot 展平后拼接起来。
+   在固定上界实现里，`U_raw` 对应所有被当前输入 notes 实际保留的真实 slots；其中只有满足 `live_{i,j} = 1` 的 slots 会被复制到 `Slots_out`，但所有真实输入 slots 都继续参与当前 blacklist 检查。
 
 5. 定义所有输出 notes 共享的 canonical source 数组：
 
@@ -368,11 +369,11 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
 
    > **说明**：`Consistent(U_raw)` 由 `sel` 映射约束隐式保证——当同一 `srcId` 的多个出现通过 `sel_{i,j,k} = 1` 映射到同一个输出 slot `k` 时，每个出现都被约束为 `enterEpoch_{i,j} = enterEpoch_out_k`，因此它们的 `enterEpoch` 必然一致。无需在电路中单独实现 `Consistent` 检查。
 
-6. 对 `Slots_out` 中每个真实 slot `(srcId_k, enterEpoch_k)`，必须有：
+6. 对每个输入 source slot `(i, j)`，若 `inUsed_i = 1` 且 `srcId_{i,j} != 0`，则必须有：
 
-   `VerifyNonMembership(R_blk[e_tx], srcId_k, w_nm_k) = 1`
+   `VerifyNonMembership(R_blk[e_tx], srcId_{i,j}, w_nm_{i,j}) = 1`
 
-   对 padding slot `(0,0)`，对应的 `w_nm_k` 不参与语义约束。
+   对 padding slot `(0,0)`，或未使用输入中的 slot，对应的 `w_nm_{i,j}` 不参与语义约束。
 
 7. `sourcesRoot_out` 由 `Slots_out` 计算得到。
 
@@ -393,7 +394,7 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
      `rho_out_j = 0`
      `noteCommit_out_j = 0`
 
-该关系表达的语义是：`shield_transfer` 会先收集所有输入 notes 的原始 source 列表，再按当前 epoch 过滤活跃项、去重、排序、补到 `K` 个 slot，并让所有输出 notes 共同继承这份 canonical source 状态；如果活跃 source 在当前 epoch 被 blacklist，则 transfer 无法通过。
+该关系表达的语义是：`shield_transfer` 会先检查当前输入 notes 中所有仍被保留的真实 source slots 都不在当前 blacklist 中；然后再按当前 epoch 过滤活跃项、去重、排序、补到 `K` 个 slot，并让所有输出 notes 共同继承这份 canonical source 状态。这样一来，某个 source 即使已经超过 `T` 个 epoch，只要它还保留在输入 note 中，就仍然可以阻止本次 transfer。
 
 ### 7. `UnshieldPOI` 电路关系
 
@@ -409,7 +410,7 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
 
 * `path_note` 是 `noteCommit` 到 `root_note` 的 Merkle inclusion path
 * `withdrawCommit = H(amount, recipient, nf)`
-* `w_nm_k` 只在第 `k` 个 source slot 当前仍活跃时才真正参与约束
+* `w_nm_k` 只在第 `k` 个 source slot 为真实 source 时才真正参与约束
 
 关系 `R_unshield(x_unshield, w_unshield) = 1` 当且仅当以下条件同时成立：
 
@@ -423,12 +424,12 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
 8. `withdrawCommit = H(amount, recipient, nf)`。
 9. 对每个 `i in {0, ..., K-1}`，定义：
 
-   `isActive_i = (srcId_i != 0) AND (e_now - enterEpoch_i <= T)`
+   `isRetained_i = (srcId_i != 0)`
 
-10. 若 `isActive_i = 1`，则必须有 `VerifyNonMembership(R_blk[e_now], srcId_i, w_nm_i) = 1`。
-11. 若 `isActive_i = 0`，则 `w_nm_i` 不参与语义约束。
+10. 若 `isRetained_i = 1`，则必须有 `VerifyNonMembership(R_blk[e_now], srcId_i, w_nm_i) = 1`。
+11. 若 `isRetained_i = 0`，则 `w_nm_i` 不参与语义约束。
 
-该关系表达的语义是：提现时只检查 note 中仍处在 `T` 个 epoch 保留窗口内的真实 source slots；超过窗口的 source 会被自然忽略，这正是 Option C 的合规语义。
+该关系表达的语义是：提现时检查 note 中当前仍被保留的所有真实 source slots，而不是只检查在 `e_now` 下仍然活跃的那部分 slots。超过 `T` 个 epoch 的 source 只有在一次成功的 transfer 中被 prune 出后，才不再影响后续 POI。
 
 ### 8. 关于 `Canon_e` 与 `K` padding
 
@@ -448,7 +449,8 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
 1. 在电路外由 prover 计算好 `Slots_out`。
 2. 在电路里只验证 `Slots_out` 满足 `WellFormed`。
 3. 再通过 `sel_{i,j,k}` 验证“每个输入活跃 source 都被覆盖”以及“每个输出真实 source 都有输入来源”。
-4. 利用 `Slots_out` 的严格递增约束来承载 `unique` 语义。
+4. 另外单独验证每个输入保留 source 都通过当前 blacklist 的 non-membership 检查。
+5. 利用 `Slots_out` 的严格递增约束来承载 `unique` 语义。
 
 这样就把“构造 canonical 结果”改成了“验证 witness 给出的结果已经 canonical”，通常比在电路里直接做 `sort + unique` 更自然。
 
