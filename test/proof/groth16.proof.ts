@@ -1,23 +1,10 @@
-const assert = require("node:assert/strict");
+import assert from "node:assert/strict";
 
-const {
-  emptyTransferSelectors,
-  makeSlots
-} = require("../helpers/fixtures");
-const {
-  buildNoteWithSlots,
-  buildShieldAspCase,
-  buildShieldTransferCase,
-  buildUnshieldCase
-} = require("../helpers/cases");
-const {
-  createProof,
-  ensureProofSetups,
-  proveAndVerify,
-  verifyProof
-} = require("../helpers/groth16");
+import { buildNoteWithSlots, buildShieldAspCase, buildShieldTransferCase, buildUnshieldCase } from "../helpers/cases";
+import { emptyTransferSelectors, makeSlots } from "../helpers/fixtures";
+import { createProof, ensureProofSetups, proveAndVerify, verifyProof } from "../helpers/groth16";
 
-describe("Groth16 Proofs", function () {
+describe("Groth16 Proofs", function (this: Mocha.Suite) {
   this.timeout(1800000);
 
   before(async function () {
@@ -59,7 +46,7 @@ describe("Groth16 Proofs", function () {
   it("fails verification after tampering with public signals", async function () {
     const { input } = await buildShieldAspCase();
     const proofBundle = await createProof("shield_asp", input);
-    const tamperedPublicSignals = [...proofBundle.publicSignals];
+    const tamperedPublicSignals = [...(proofBundle.publicSignals as string[])];
     tamperedPublicSignals[0] = (BigInt(tamperedPublicSignals[0]) + 1n).toString();
 
     const verified = await verifyProof(

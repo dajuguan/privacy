@@ -1,4 +1,4 @@
-const {
+import {
   DEFAULT_DEPTH,
   K,
   MAX_INPUTS,
@@ -18,17 +18,29 @@ const {
   makeSlots,
   normalizeSignals,
   zeroArray
-} = require("./fixtures");
+} from "./fixtures";
+import type { BigNumberish, NormalizedRecord, NoteData, Slots, TransferOutputNote } from "./types";
 
-async function buildShieldAspCase({
+export interface ShieldAspCase {
+  input: NormalizedRecord;
+  noteCommit: bigint;
+}
+
+export async function buildShieldAspCase({
   depositIndex = 9n,
   amount = 30n,
   ask = 7n,
   depositSecret = 12n,
   blacklistKeys = []
-} = {}) {
+}: {
+  depositIndex?: BigNumberish;
+  amount?: BigNumberish;
+  ask?: BigNumberish;
+  depositSecret?: BigNumberish;
+  blacklistKeys?: BigNumberish[];
+} = {}): Promise<ShieldAspCase> {
   const deposit = await buildDeposit({ depositIndex, amount, ask, depositSecret });
-  const depProof = await buildFixedDepthProof(deposit.depLeaf, Number(depositIndex - 1n), DEFAULT_DEPTH, 0n);
+  const depProof = await buildFixedDepthProof(deposit.depLeaf, Number(deposit.depositIndex - 1n), DEFAULT_DEPTH, 0n);
   const blacklistWitness = await buildBlacklistWitness(blacklistKeys, depositIndex, DEFAULT_DEPTH);
   const slots = makeSlots([[depositIndex, 5n]]);
   const sourcesRoot = await buildSlotsRoot(slots.srcIds, slots.enterEpochs);
@@ -37,7 +49,7 @@ async function buildShieldAspCase({
   return {
     input: normalizeSignals({
       root_dep: depProof.root,
-      root_blk: blacklistWitness.root,
+      root_blk: blacklistWitness.root!,
       e_shield: 5n,
       noteCommit,
       depositIndex,
@@ -50,43 +62,64 @@ async function buildShieldAspCase({
       blk_low_leaf_next_key: blacklistWitness.lowLeafNextKey,
       blk_path_siblings: blacklistWitness.siblings,
       blk_path_indices: blacklistWitness.pathIndices
-    }),
+    }) as NormalizedRecord,
     noteCommit
   };
 }
 
-async function buildNoteWithSlots({ amount, ask, rho, slots }) {
+export async function buildNoteWithSlots({
+  amount,
+  ask,
+  rho,
+  slots
+}: {
+  amount: BigNumberish;
+  ask: BigNumberish;
+  rho: BigNumberish;
+  slots: Slots;
+}): Promise<NoteData> {
   return buildNote({ amount, ask, rho, srcIds: slots.srcIds, enterEpochs: slots.enterEpochs });
 }
 
-async function buildShieldTransferCase({
+export async function buildShieldTransferCase({
   inputNotes,
   outputNotes,
   outSlots,
   eTx = 5n,
   blacklistKeys = [],
   selectors
-}) {
+}: {
+  inputNotes: NoteData[];
+  outputNotes: TransferOutputNote[];
+  outSlots: Slots;
+  eTx?: BigNumberish;
+  blacklistKeys?: BigNumberish[];
+  selectors: bigint[][][];
+}): Promise<NormalizedRecord> {
   const noteLeaves = zeroArray(1 << DEFAULT_DEPTH, 0n);
   const proofs = [];
 
-  for (let i = 0; i < inputNotes.length; i += 1) {
-    noteLeaves[i] = inputNotes[i].noteCommit;
+  for (let index = 0; index < inputNotes.length; index += 1) {
+    noteLeaves[index] = inputNotes[index].noteCommit;
   }
 
-  for (let i = 0; i < inputNotes.length; i += 1) {
-    proofs.push(await buildBinaryProof(noteLeaves, i));
+  for (let index = 0; index < inputNotes.length; index += 1) {
+    proofs.push(await buildBinaryProof(noteLeaves, index));
   }
 
   const rootNote = proofs[0].root;
-  const blacklistRoot = (await buildBlacklistWitness(blacklistKeys, 1n, DEFAULT_DEPTH)).root;
+  const blacklistRoot = (await buildBlacklistWitness(blacklistKeys, 1n, DEFAULT_DEPTH)).root!;
   const outputSourcesRoot = await buildSlotsRoot(outSlots.srcIds, outSlots.enterEpochs);
   const nmTensor = emptyBlacklistTensor();
 
-  for (let i = 0; i < MAX_INPUTS; i += 1) {
-    for (let j = 0; j < K; j += 1) {
-      if (i < inputNotes.length && inputNotes[i].srcIds[j] !== 0n) {
-        nmTensor[i][j] = await buildBlacklistWitness(blacklistKeys, inputNotes[i].srcIds[j], DEFAULT_DEPTH);
+  for (let inputIndex = 0; inputIndex < MAX_INPUTS; inputIndex += 1) {
+    for (let slotIndex = 0; slotIndex < K; slotIndex += 1) {
+      if (inputIndex < inputNotes.length && inputNotes[inputIndex].srcIds[slotIndex] !== 0n) {
+        nmTensor[inputIndex][slotIndex] = await buildBlacklistWitness(
+          blacklistKeys,
+          inputNotes[inputIndex].srcIds[slotIndex],
+          DEFAULT_DEPTH
+        );
       }
     }
   }
@@ -101,16 +134,16 @@ async function buildShieldTransferCase({
   const inUsed = zeroArray(MAX_INPUTS);
   const nf = zeroArray(MAX_INPUTS);
 
-  for (let i = 0; i < inputNotes.length; i += 1) {
-    inUsed[i] = 1n;
-    amountIn[i] = inputNotes[i].amount;
-    rhoIn[i] = inputNotes[i].rho;
-    askIn[i] = inputNotes[i].ask;
-    inSrcIds[i] = [...inputNotes[i].srcIds];
-    inEnterEpochs[i] = [...inputNotes[i].enterEpochs];
-    notePathSiblings[i] = [...proofs[i].siblings];
-    notePathIndices[i] = [...proofs[i].pathIndices];
-    nf[i] = inputNotes[i].nf;
+  for (let inputIndex = 0; inputIndex < inputNotes.length; inputIndex += 1) {
+    inUsed[inputIndex] = 1n;
+    amountIn[inputIndex] = inputNotes[inputIndex].amount;
+    rhoIn[inputIndex] = inputNotes[inputIndex].rho;
+    askIn[inputIndex] = inputNotes[inputIndex].ask;
+    inSrcIds[inputIndex] = [...inputNotes[inputIndex].srcIds];
+    inEnterEpochs[inputIndex] = [...inputNotes[inputIndex].enterEpochs];
+    notePathSiblings[inputIndex] = [...proofs[inputIndex].siblings];
+    notePathIndices[inputIndex] = [...proofs[inputIndex].pathIndices];
+    nf[inputIndex] = inputNotes[inputIndex].nf;
   }
 
   const amountOut = zeroArray(MAX_OUTPUTS);
@@ -119,12 +152,17 @@ async function buildShieldTransferCase({
   const outUsed = zeroArray(MAX_OUTPUTS);
   const noteCommitOut = zeroArray(MAX_OUTPUTS);
 
-  for (let j = 0; j < outputNotes.length; j += 1) {
-    outUsed[j] = 1n;
-    amountOut[j] = outputNotes[j].amount;
-    ownerCommitOut[j] = outputNotes[j].ownerCommit;
-    rhoOut[j] = outputNotes[j].rho;
-    noteCommitOut[j] = await hash4(outputNotes[j].amount, outputNotes[j].ownerCommit, outputNotes[j].rho, outputSourcesRoot);
+  for (let outputIndex = 0; outputIndex < outputNotes.length; outputIndex += 1) {
+    outUsed[outputIndex] = 1n;
+    amountOut[outputIndex] = BigInt(outputNotes[outputIndex].amount);
+    ownerCommitOut[outputIndex] = BigInt(outputNotes[outputIndex].ownerCommit);
+    rhoOut[outputIndex] = BigInt(outputNotes[outputIndex].rho);
+    noteCommitOut[outputIndex] = await hash4(
+      outputNotes[outputIndex].amount,
+      outputNotes[outputIndex].ownerCommit,
+      outputNotes[outputIndex].rho,
+      outputSourcesRoot
+    );
   }
 
   return normalizeSignals({
@@ -152,10 +190,10 @@ async function buildShieldTransferCase({
     nmLowLeafNextKey: nmTensor.map((row) => row.map((entry) => entry.lowLeafNextKey)),
     nmPathSiblings: nmTensor.map((row) => row.map((entry) => entry.siblings)),
     nmPathIndices: nmTensor.map((row) => row.map((entry) => entry.pathIndices))
-  });
+  }) as NormalizedRecord;
 }
 
-async function buildUnshieldCase({
+export async function buildUnshieldCase({
   amount = 30n,
   ask = 7n,
   rho = 50n,
@@ -163,21 +201,29 @@ async function buildUnshieldCase({
   slots = makeSlots([[21n, 0n]]),
   blacklistKeys = [],
   eNow = 10n
-} = {}) {
+}: {
+  amount?: BigNumberish;
+  ask?: BigNumberish;
+  rho?: BigNumberish;
+  recipient?: BigNumberish;
+  slots?: Slots;
+  blacklistKeys?: BigNumberish[];
+  eNow?: BigNumberish;
+} = {}): Promise<NormalizedRecord> {
   const note = await buildNote({ amount, ask, rho, srcIds: slots.srcIds, enterEpochs: slots.enterEpochs });
   const noteProof = await buildFixedDepthProof(note.noteCommit, 0, DEFAULT_DEPTH, 0n);
   const withdrawCommit = await hash3(amount, recipient, note.nf);
 
   const witnesses = Array.from({ length: K }, () => disabledBlacklistWitness());
-  for (let i = 0; i < K; i += 1) {
-    if (slots.srcIds[i] !== 0n) {
-      witnesses[i] = await buildBlacklistWitness(blacklistKeys, slots.srcIds[i], DEFAULT_DEPTH);
+  for (let index = 0; index < K; index += 1) {
+    if (slots.srcIds[index] !== 0n) {
+      witnesses[index] = await buildBlacklistWitness(blacklistKeys, slots.srcIds[index], DEFAULT_DEPTH);
     }
   }
 
   return normalizeSignals({
     root_note: noteProof.root,
-    root_blk: (await buildBlacklistWitness(blacklistKeys, 1n, DEFAULT_DEPTH)).root,
+    root_blk: (await buildBlacklistWitness(blacklistKeys, 1n, DEFAULT_DEPTH)).root!,
     e_now: eNow,
     nf: note.nf,
     withdrawCommit,
@@ -193,13 +239,7 @@ async function buildUnshieldCase({
     nmLowLeafNextKey: witnesses.map((entry) => entry.lowLeafNextKey),
     nmPathSiblings: witnesses.map((entry) => entry.siblings),
     nmPathIndices: witnesses.map((entry) => entry.pathIndices)
-  });
+  }) as NormalizedRecord;
 }
 
-module.exports = {
-  T_WINDOW,
-  buildNoteWithSlots,
-  buildShieldAspCase,
-  buildShieldTransferCase,
-  buildUnshieldCase
-};
+export { T_WINDOW };

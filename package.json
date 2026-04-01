@@ -8,11 +8,12 @@
     "compile:transfer": "mkdir -p build/shield_transfer && circom circuits/shield_transfer.circom --r1cs --wasm --sym -o build/shield_transfer",
     "compile:unshield": "mkdir -p build/unshield_poi && circom circuits/unshield_poi.circom --r1cs --wasm --sym -o build/unshield_poi",
     "compile:all": "npm run compile:shield && npm run compile:transfer && npm run compile:unshield",
-    "setup:ptau": "node scripts/setup_groth16.js ptau",
-    "setup:zkeys": "node scripts/setup_groth16.js zkeys",
-    "test": "mocha --timeout 120000 \"test/**/*.test.js\"",
-    "test:proof": "mocha --timeout 1800000 \"test/proof/**/*.proof.js\"",
-    "test:all": "npm test && npm run test:proof"
+    "setup:ptau": "ts-node --transpile-only scripts/setup_groth16.ts ptau",
+    "setup:zkeys": "ts-node --transpile-only scripts/setup_groth16.ts zkeys",
+    "typecheck": "tsc --noEmit",
+    "test": "mocha --require ts-node/register/transpile-only --extension ts --timeout 120000 \"test/**/*.test.ts\"",
+    "test:proof": "mocha --require ts-node/register/transpile-only --extension ts --timeout 1800000 \"test/proof/**/*.proof.ts\"",
+    "test:all": "npm run typecheck && npm test && npm run test:proof"
   },
   "dependencies": {
     "circomlib": "2.0.5",
@@ -20,9 +21,13 @@
     "ffjavascript": "0.3.1"
   },
   "devDependencies": {
+    "@types/mocha": "10.0.10",
+    "@types/node": "22.15.3",
     "chai": "5.2.0",
     "circom_tester": "0.0.24",
     "mocha": "11.3.0",
-    "snarkjs": "0.7.6"
+    "snarkjs": "0.7.6",
+    "ts-node": "10.9.2",
+    "typescript": "5.8.3"
   }
 }

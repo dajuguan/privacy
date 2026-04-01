@@ -2,6 +2,9 @@
 
 Retained-slot strict POI circuits implemented with Circom and `circomlib`.
 
+The Node-side tooling and tests are written in TypeScript. The `.circom`
+circuits remain unchanged.
+
 ## Prerequisites
 
 - `circom` 2.2.3
@@ -54,6 +57,7 @@ leaf positions.
 ## Witness Tests
 
 ```bash
+npm run typecheck
 npm test
 ```
 

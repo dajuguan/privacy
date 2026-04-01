@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
-const { ensureAllCircuitSetups, ensurePtau } = require("./groth16");
+import { ensureAllCircuitSetups, ensurePtau } from "./groth16";
 
-function printUsage() {
-  console.error("Usage: node scripts/setup_groth16.js <ptau|zkeys>");
+function printUsage(): void {
+  console.error("Usage: ts-node scripts/setup_groth16.ts <ptau|zkeys>");
 }
 
-function main() {
+function main(): void {
   const command = process.argv[2];
 
   if (command === "ptau") {

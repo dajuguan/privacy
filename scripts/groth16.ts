@@ -1,22 +1,43 @@
-const fs = require("node:fs");
-const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { execFileSync } from "node:child_process";
+
+export interface CircuitArtifacts {
+  name: string;
+  compileScript: string;
+  circuitFile: string;
+  buildDir: string;
+  r1csPath: string;
+  wasmPath: string;
+}
+
+export interface CircuitSetupArtifacts extends CircuitArtifacts {
+  ptauPath: string;
+  dirPath: string;
+  initialZkeyPath: string;
+  finalZkeyPath: string;
+  verificationKeyPath: string;
+}
+
+interface RunBinaryOptions {
+  quiet?: boolean;
+}
 
 const ROOT = path.resolve(__dirname, "..");
 const SNARKJS_CLI = path.join(path.dirname(require.resolve("snarkjs")), "cli.cjs");
 
-const PTAU_POWER = 18;
+export const PTAU_POWER = 18;
+export const BEACON_ITERATIONS_EXP = "10";
 const PTAU_BEACON_HASH = "1111111111111111111111111111111111111111111111111111111111111111";
-const BEACON_ITERATIONS_EXP = "10";
 
 const SETUP_DIR = path.join(ROOT, "setup");
 const GROTH16_DIR = path.join(SETUP_DIR, "groth16");
 const POWERS_OF_TAU_DIR = path.join(SETUP_DIR, "powersOfTau");
-const PTAU_FINAL = path.join(POWERS_OF_TAU_DIR, `pot${PTAU_POWER}_final.ptau`);
+export const PTAU_FINAL = path.join(POWERS_OF_TAU_DIR, `pot${PTAU_POWER}_final.ptau`);
 const CIRCUITS_DIR = path.join(ROOT, "circuits");
-const PROOFS_DIR = path.join(ROOT, "build", "proofs");
+export const PROOFS_DIR = path.join(ROOT, "build", "proofs");
 
-const CIRCUITS = {
+export const CIRCUITS = {
   shield_asp: {
     name: "shield_asp",
     compileScript: "compile:shield",
@@ -41,23 +62,25 @@ const CIRCUITS = {
     r1csPath: path.join(ROOT, "build", "unshield_poi", "unshield_poi.r1cs"),
     wasmPath: path.join(ROOT, "build", "unshield_poi", "unshield_poi_js", "unshield_poi.wasm")
   }
-};
+} as const satisfies Record<string, CircuitArtifacts>;
 
-function npmBin() {
+export type CircuitName = keyof typeof CIRCUITS;
+
+function npmBin(): string {
   return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
-function getRapidSnarkBin() {
+export function getRapidSnarkBin(): string {
   return process.env.RAPIDSNARK_BIN || "rapidsnark";
 }
 
-function ensureDir(dirPath) {
+function ensureDir(dirPath: string): void {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
-function listCircomFiles(dirPath) {
+function listCircomFiles(dirPath: string): string[] {
   const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  const files = [];
+  const files: string[] = [];
 
   for (const entry of entries) {
     const entryPath = path.join(dirPath, entry.name);
@@ -71,21 +94,21 @@ function listCircomFiles(dirPath) {
   return files;
 }
 
-function latestSourceMtimeMs() {
+function latestSourceMtimeMs(): number {
   return listCircomFiles(CIRCUITS_DIR).reduce((latest, filePath) => {
     return Math.max(latest, fs.statSync(filePath).mtimeMs);
   }, 0);
 }
 
-function fileExists(filePath) {
+function fileExists(filePath: string): boolean {
   return fs.existsSync(filePath) && fs.statSync(filePath).size > 0;
 }
 
-function mtimeMs(filePath) {
+function mtimeMs(filePath: string): number {
   return fs.statSync(filePath).mtimeMs;
 }
 
-function isStale(outputPath, inputPaths) {
+function isStale(outputPath: string, inputPaths: string[]): boolean {
   if (!fileExists(outputPath)) {
     return true;
   }
@@ -94,28 +117,28 @@ function isStale(outputPath, inputPaths) {
   return inputPaths.some((inputPath) => fileExists(inputPath) && mtimeMs(inputPath) > outputMtime);
 }
 
-function runBinary(command, args, { quiet = false } = {}) {
+export function runBinary(command: string, args: string[], { quiet = false }: RunBinaryOptions = {}): Buffer {
   return execFileSync(command, args, {
     cwd: ROOT,
     stdio: quiet ? "pipe" : "inherit"
   });
 }
 
-function runSnarkjs(args, options) {
+export function runSnarkjs(args: string[], options?: RunBinaryOptions): Buffer {
   return runBinary(process.execPath, [SNARKJS_CLI, ...args], options);
 }
 
-function safeUnlink(filePath) {
+function safeUnlink(filePath: string): void {
   if (fs.existsSync(filePath)) {
     fs.unlinkSync(filePath);
   }
 }
 
-function copyFile(sourcePath, destinationPath) {
+function copyFile(sourcePath: string, destinationPath: string): void {
   fs.copyFileSync(sourcePath, destinationPath);
 }
 
-function isFinalZkeyUsable(initialZkeyPath, finalZkeyPath) {
+function isFinalZkeyUsable(initialZkeyPath: string, finalZkeyPath: string): boolean {
   if (!fileExists(finalZkeyPath)) {
     return false;
   }
@@ -127,11 +150,8 @@ function isFinalZkeyUsable(initialZkeyPath, finalZkeyPath) {
   return fs.statSync(finalZkeyPath).size >= fs.statSync(initialZkeyPath).size;
 }
 
-function ensureCompiled(circuitName, { quiet = false } = {}) {
+export function ensureCompiled(circuitName: CircuitName, { quiet = false }: RunBinaryOptions = {}): CircuitArtifacts {
   const circuit = CIRCUITS[circuitName];
-  if (!circuit) {
-    throw new Error(`Unknown circuit: ${circuitName}`);
-  }
 
   const needsCompile =
     !fileExists(circuit.r1csPath) ||
@@ -146,7 +166,7 @@ function ensureCompiled(circuitName, { quiet = false } = {}) {
   return circuit;
 }
 
-function ensurePtau({ quiet = false } = {}) {
+export function ensurePtau({ quiet = false }: RunBinaryOptions = {}): string {
   if (fileExists(PTAU_FINAL)) {
     return PTAU_FINAL;
   }
@@ -170,11 +190,16 @@ function ensurePtau({ quiet = false } = {}) {
   return PTAU_FINAL;
 }
 
-function circuitSetupDir(circuitName) {
+function circuitSetupDir(circuitName: CircuitName): string {
   return path.join(GROTH16_DIR, circuitName);
 }
 
-function circuitZkeyPaths(circuitName) {
+export function circuitZkeyPaths(circuitName: CircuitName): {
+  dirPath: string;
+  initialZkeyPath: string;
+  finalZkeyPath: string;
+  verificationKeyPath: string;
+} {
   const dirPath = circuitSetupDir(circuitName);
   return {
     dirPath,
@@ -184,7 +209,10 @@ function circuitZkeyPaths(circuitName) {
   };
 }
 
-function ensureCircuitSetup(circuitName, { quiet = false } = {}) {
+export function ensureCircuitSetup(
+  circuitName: CircuitName,
+  { quiet = false }: RunBinaryOptions = {}
+): CircuitSetupArtifacts {
   const circuit = ensureCompiled(circuitName, { quiet });
   const ptauPath = ensurePtau({ quiet });
   const { dirPath, initialZkeyPath, finalZkeyPath, verificationKeyPath } = circuitZkeyPaths(circuitName);
@@ -219,39 +247,22 @@ function ensureCircuitSetup(circuitName, { quiet = false } = {}) {
   };
 }
 
-function ensureAllCircuitSetups({ quiet = false } = {}) {
-  return Object.keys(CIRCUITS).map((circuitName) => ensureCircuitSetup(circuitName, { quiet }));
+export function ensureAllCircuitSetups({ quiet = false }: RunBinaryOptions = {}): CircuitSetupArtifacts[] {
+  return (Object.keys(CIRCUITS) as CircuitName[]).map((circuitName) => ensureCircuitSetup(circuitName, { quiet }));
 }
 
-function ensureRapidSnark() {
+export function ensureRapidSnark(): void {
   try {
     const locator = process.platform === "win32" ? "where" : "which";
     runBinary(locator, [getRapidSnarkBin()], { quiet: true });
-  } catch (error) {
+  } catch {
     throw new Error("rapidsnark was not found in PATH. Set RAPIDSNARK_BIN if it is installed elsewhere.");
   }
 }
 
-function createProofRunDir(circuitName) {
+export function createProofRunDir(circuitName: CircuitName): string {
   ensureDir(PROOFS_DIR);
   return fs.mkdtempSync(path.join(PROOFS_DIR, `${circuitName}-`));
 }
 
-module.exports = {
-  BEACON_ITERATIONS_EXP,
-  CIRCUITS,
-  PROOFS_DIR,
-  PTAU_FINAL,
-  PTAU_POWER,
-  ROOT,
-  circuitZkeyPaths,
-  createProofRunDir,
-  ensureAllCircuitSetups,
-  ensureCircuitSetup,
-  ensureCompiled,
-  ensurePtau,
-  ensureRapidSnark,
-  getRapidSnarkBin,
-  runBinary,
-  runSnarkjs
-};
+export { ROOT };

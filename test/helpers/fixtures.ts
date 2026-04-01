@@ -1,50 +1,63 @@
-const path = require("path");
+import * as path from "node:path";
 
-const circomTester = require("circom_tester");
-const circomlibjs = require("circomlibjs");
+import circomTester = require("circom_tester");
+import * as circomlibjs from "circomlibjs";
 
-const DEFAULT_DEPTH = 4;
-const K = 16;
-const MAX_INPUTS = 2;
-const MAX_OUTPUTS = 2;
-const T_WINDOW = 4n;
+import type {
+  BigNumberish,
+  BinaryProof,
+  BlacklistState,
+  BlacklistWitness,
+  DepositData,
+  NormalizedRecord,
+  NormalizedSignal,
+  NoteData,
+  SignalInput,
+  Slots
+} from "./types";
+
+export const DEFAULT_DEPTH = 4;
+export const K = 16;
+export const MAX_INPUTS = 2;
+export const MAX_OUTPUTS = 2;
+export const T_WINDOW = 4n;
 const MAX_U64 = (1n << 64n) - 1n;
 
-let poseidonInstance;
+let poseidonInstance: circomlibjs.PoseidonInstance | undefined;
 
-async function getPoseidon() {
+async function getPoseidon(): Promise<circomlibjs.PoseidonInstance> {
   if (!poseidonInstance) {
     poseidonInstance = await circomlibjs.buildPoseidon();
   }
   return poseidonInstance;
 }
 
-async function poseidonHash(inputs) {
+async function poseidonHash(inputs: BigNumberish[]): Promise<bigint> {
   const poseidon = await getPoseidon();
   return poseidon.F.toObject(poseidon(inputs.map((value) => BigInt(value))));
 }
 
-async function hash1(a) {
+export async function hash1(a: BigNumberish): Promise<bigint> {
   return poseidonHash([a]);
 }
 
-async function hash2(a, b) {
+export async function hash2(a: BigNumberish, b: BigNumberish): Promise<bigint> {
   return poseidonHash([a, b]);
 }
 
-async function hash3(a, b, c) {
+export async function hash3(a: BigNumberish, b: BigNumberish, c: BigNumberish): Promise<bigint> {
   return poseidonHash([a, b, c]);
 }
 
-async function hash4(a, b, c, d) {
+export async function hash4(a: BigNumberish, b: BigNumberish, c: BigNumberish, d: BigNumberish): Promise<bigint> {
   return poseidonHash([a, b, c, d]);
 }
 
-function zeroArray(length, value = 0n) {
+export function zeroArray(length: number, value: BigNumberish = 0n): bigint[] {
   return Array.from({ length }, () => BigInt(value));
 }
 
-function makeSlots(entries, size = K) {
+export function makeSlots(entries: Array<[BigNumberish, BigNumberish]>, size = K): Slots {
   const srcIds = zeroArray(size);
   const enterEpochs = zeroArray(size);
 
@@ -56,23 +69,23 @@ function makeSlots(entries, size = K) {
   return { srcIds, enterEpochs };
 }
 
-async function buildBinaryLevels(leaves) {
-  const levels = [leaves.map((leaf) => BigInt(leaf))];
+async function buildBinaryLevels(leaves: BigNumberish[]): Promise<bigint[][]> {
+  const levels: bigint[][] = [leaves.map((leaf) => BigInt(leaf))];
   while (levels[levels.length - 1].length > 1) {
     const current = levels[levels.length - 1];
-    const next = [];
-    for (let i = 0; i < current.length; i += 2) {
-      next.push(await hash2(current[i], current[i + 1]));
+    const next: bigint[] = [];
+    for (let index = 0; index < current.length; index += 2) {
+      next.push(await hash2(current[index], current[index + 1]));
     }
     levels.push(next);
   }
   return levels;
 }
 
-async function buildBinaryProof(leaves, index) {
+export async function buildBinaryProof(leaves: BigNumberish[], index: number): Promise<BinaryProof> {
   const levels = await buildBinaryLevels(leaves);
-  const siblings = [];
-  const pathIndices = [];
+  const siblings: bigint[] = [];
+  const pathIndices: bigint[] = [];
   let currentIndex = index;
 
   for (let level = 0; level < levels.length - 1; level += 1) {
@@ -89,22 +102,39 @@ async function buildBinaryProof(leaves, index) {
   };
 }
 
-async function buildFixedDepthProof(leaf, index, depth, emptyLeaf = 0n) {
+export async function buildFixedDepthProof(
+  leaf: BigNumberish,
+  index: number,
+  depth: number,
+  emptyLeaf: BigNumberish = 0n
+): Promise<BinaryProof> {
   const leaves = zeroArray(1 << depth, emptyLeaf);
   leaves[index] = BigInt(leaf);
   return buildBinaryProof(leaves, index);
 }
 
-async function buildSlotsRoot(srcIds, enterEpochs) {
-  const leaves = [];
-  for (let i = 0; i < srcIds.length; i += 1) {
-    leaves.push(await hash2(srcIds[i], enterEpochs[i]));
+export async function buildSlotsRoot(srcIds: BigNumberish[], enterEpochs: BigNumberish[]): Promise<bigint> {
+  const leaves: bigint[] = [];
+  for (let index = 0; index < srcIds.length; index += 1) {
+    leaves.push(await hash2(srcIds[index], enterEpochs[index]));
   }
   const proof = await buildBinaryProof(leaves, 0);
   return proof.root;
 }
 
-async function buildNote({ amount, ask, rho, srcIds, enterEpochs }) {
+export async function buildNote({
+  amount,
+  ask,
+  rho,
+  srcIds,
+  enterEpochs
+}: {
+  amount: BigNumberish;
+  ask: BigNumberish;
+  rho: BigNumberish;
+  srcIds: BigNumberish[];
+  enterEpochs: BigNumberish[];
+}): Promise<NoteData> {
   const ownerCommit = await hash1(ask);
   const sourcesRoot = await buildSlotsRoot(srcIds, enterEpochs);
   const noteCommit = await hash4(amount, ownerCommit, rho, sourcesRoot);
@@ -123,7 +153,17 @@ async function buildNote({ amount, ask, rho, srcIds, enterEpochs }) {
   };
 }
 
-async function buildDeposit({ depositIndex, amount, ask, depositSecret }) {
+export async function buildDeposit({
+  depositIndex,
+  amount,
+  ask,
+  depositSecret
+}: {
+  depositIndex: BigNumberish;
+  amount: BigNumberish;
+  ask: BigNumberish;
+  depositSecret: BigNumberish;
+}): Promise<DepositData> {
   const ownerCommit = await hash1(ask);
   const depLeaf = await hash4(depositIndex, amount, ownerCommit, depositSecret);
   return {
@@ -136,37 +176,41 @@ async function buildDeposit({ depositIndex, amount, ask, depositSecret }) {
   };
 }
 
-async function buildBlacklistState(keys, depth) {
+export async function buildBlacklistState(keys: BigNumberish[], depth: number): Promise<BlacklistState> {
   const sortedKeys = [...new Set(keys.map((key) => BigInt(key)))].sort((a, b) => (a < b ? -1 : 1));
-  const pairs = [];
+  const pairs: Array<[bigint, bigint]> = [];
 
   if (sortedKeys.length === 0) {
     pairs.push([0n, MAX_U64]);
   } else {
     pairs.push([0n, sortedKeys[0]]);
-    for (let i = 0; i < sortedKeys.length; i += 1) {
-      pairs.push([sortedKeys[i], i + 1 < sortedKeys.length ? sortedKeys[i + 1] : MAX_U64]);
+    for (let index = 0; index < sortedKeys.length; index += 1) {
+      pairs.push([sortedKeys[index], index + 1 < sortedKeys.length ? sortedKeys[index + 1] : MAX_U64]);
     }
   }
 
   const emptyLeaf = await hash2(0n, 0n);
   const leaves = zeroArray(1 << depth, emptyLeaf);
 
-  for (let i = 0; i < pairs.length; i += 1) {
-    leaves[i] = await hash2(pairs[i][0], pairs[i][1]);
+  for (let index = 0; index < pairs.length; index += 1) {
+    leaves[index] = await hash2(pairs[index][0], pairs[index][1]);
   }
 
   const root = (await buildBinaryProof(leaves, 0)).root;
   return { root, pairs, leaves };
 }
 
-async function buildBlacklistWitness(keys, srcId, depth = DEFAULT_DEPTH) {
+export async function buildBlacklistWitness(
+  keys: BigNumberish[],
+  srcId: BigNumberish,
+  depth = DEFAULT_DEPTH
+): Promise<BlacklistWitness> {
   const state = await buildBlacklistState(keys, depth);
   let pairIndex = 0;
 
-  for (let i = 0; i < state.pairs.length; i += 1) {
-    if (state.pairs[i][0] < BigInt(srcId)) {
-      pairIndex = i;
+  for (let index = 0; index < state.pairs.length; index += 1) {
+    if (state.pairs[index][0] < BigInt(srcId)) {
+      pairIndex = index;
     } else {
       break;
     }
@@ -182,7 +226,7 @@ async function buildBlacklistWitness(keys, srcId, depth = DEFAULT_DEPTH) {
   };
 }
 
-function disabledBlacklistWitness(depth = DEFAULT_DEPTH) {
+export function disabledBlacklistWitness(depth = DEFAULT_DEPTH): BlacklistWitness {
   return {
     lowLeafKey: 0n,
     lowLeafNextKey: 0n,
@@ -191,7 +235,7 @@ function disabledBlacklistWitness(depth = DEFAULT_DEPTH) {
   };
 }
 
-function normalizeSignals(value) {
+export function normalizeSignals(value: SignalInput): NormalizedSignal {
   if (typeof value === "bigint") {
     return value.toString();
   }
@@ -199,51 +243,27 @@ function normalizeSignals(value) {
     return value.map(normalizeSignals);
   }
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, normalizeSignals(entry)]));
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, normalizeSignals(entry as SignalInput)])
+    ) as NormalizedRecord;
   }
   return value;
 }
 
-async function loadCircuit(fileName) {
+export async function loadCircuit(fileName: string): Promise<circomTester.CircomWasmTester> {
   return circomTester.wasm(path.join(__dirname, "..", "..", "circuits", fileName), {
     include: [path.join(__dirname, "..", "..", "node_modules")]
   });
 }
 
-function emptyTransferSelectors() {
+export function emptyTransferSelectors(): bigint[][][] {
   return Array.from({ length: MAX_INPUTS }, () =>
     Array.from({ length: K }, () => Array.from({ length: K }, () => 0n))
   );
 }
 
-function emptyBlacklistTensor() {
+export function emptyBlacklistTensor(): BlacklistWitness[][] {
   return Array.from({ length: MAX_INPUTS }, () =>
     Array.from({ length: K }, () => disabledBlacklistWitness())
   );
 }
-
-module.exports = {
-  DEFAULT_DEPTH,
-  K,
-  MAX_INPUTS,
-  MAX_OUTPUTS,
-  T_WINDOW,
-  buildBinaryProof,
-  buildDeposit,
-  buildFixedDepthProof,
-  buildBlacklistState,
-  buildBlacklistWitness,
-  buildNote,
-  buildSlotsRoot,
-  disabledBlacklistWitness,
-  emptyBlacklistTensor,
-  emptyTransferSelectors,
-  hash1,
-  hash2,
-  hash3,
-  hash4,
-  loadCircuit,
-  makeSlots,
-  normalizeSignals,
-  zeroArray
-};
