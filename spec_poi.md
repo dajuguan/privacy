@@ -149,6 +149,8 @@ nullifier 定义为：
 
 这样在 `unshield` 时，证明者只需证明自己知道 `ask`，且 note 中的 `ownerCommit = H(ask)`，就可以在不暴露身份的前提下生成唯一 nullifier。
 
+> **实现备注**：`enterEpoch` 不需要在后续 `shield_transfer` 或 `unshield` 中作为单独的 public input 暴露给合约。因为每个 `enterEpoch_i` 已经通过 `srcLeaf_i = H(srcId_i, enterEpoch_i)` 被绑定进 `sourcesRoot`，再通过 `noteCommit = H(amount, ownerCommit, rho, sourcesRoot)` 被绑定进 note commitment。后续电路只需在私有 witness 中打开这些 `enterEpoch`，并证明它们与 `root_note` 下已存在的 `noteCommit` 一致，同时满足 `enterEpoch <= e_tx` / `e_now` 等约束；合约验证 zk proof 即可确认其正确性，无需直接看到每个 `enterEpoch` 的明文值。
+
 #### 3.4 Non-membership witness 结构
 
 blacklist 使用有序 indexed Merkle tree。每个叶子存储 `(key, nextKey)`，其中 `key` 为已被 blacklist 的 `srcId`，`nextKey` 为排序后的下一个 key（最后一个叶子的 `nextKey` 定义为一个足够大的 sentinel 值，例如 `2^64 - 1`）。
@@ -289,6 +291,8 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
 
 `x_transfer = (root_note, R_blk[e_tx], e_tx, inUsed_0, ..., inUsed_{MAX_INPUTS-1}, outUsed_0, ..., outUsed_{MAX_OUTPUTS-1}, nf_0, ..., nf_{MAX_INPUTS-1}, noteCommit_out_0, ..., noteCommit_out_{MAX_OUTPUTS-1})`
 
+> **实现备注**：这里不需要把各个输入 source 的 `enterEpoch_{i,j}` 放进 public inputs。它们已经被输入 note 的 `noteCommit_i` 间接承诺，电路会在私有 witness 中重算 `sourcesRoot_i` 和 `noteCommit_i`，并结合 `path_i` 证明这些 `enterEpoch_{i,j}` 确实来自 `root_note` 中已有的 note 状态，而不是由证明者任意伪造。
+
 私有 witness 定义为：
 
 `w_transfer = (note_in_0, ..., note_in_{MAX_INPUTS-1}, Slots_0, ..., Slots_{MAX_INPUTS-1}, path_0, ..., path_{MAX_INPUTS-1}, ask_0, ..., ask_{MAX_INPUTS-1}, amount_out_0, ..., amount_out_{MAX_OUTPUTS-1}, ownerCommit_out_0, ..., ownerCommit_out_{MAX_OUTPUTS-1}, rho_out_0, ..., rho_out_{MAX_OUTPUTS-1}, sel_{i,j,k}, w_nm_{i,j})`
@@ -401,6 +405,8 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
 `UnshieldPOI` 的公共输入定义为：
 
 `x_unshield = (root_note, R_blk[e_now], e_now, nf, withdrawCommit)`
+
+> **实现备注**：同理，`Slots(note)` 中各个 `enterEpoch_i` 不需要单独公开。它们已经通过 `sourcesRoot` 绑定在 `noteCommit` 中；电路只需在私有 witness 中打开这些值并证明 note inclusion 与 epoch 约束成立，合约无需逐个读取 `enterEpoch_i`。
 
 私有 witness 定义为：
 
