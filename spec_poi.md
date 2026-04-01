@@ -1,7 +1,7 @@
-我们来实现一个Option C: time-bounded POI retention的合规电路吧，用circom实现，放到circuits目录
+我们来实现一个 Option C: time-bounded retained-source PoI model 的合规电路吧，用circom实现，放到circuits目录
 合约采用deposit => shield => shield_transfer* => unshield的方式，以保证shield的时候可以证明ASP，否则ASP需要保存公链上所有的数据
 1. 首先是ASP的电路：需要证明shield的index不在blacklist里，这个可以参考https://github.com/ameensol/privacy-pools/tree/main/circuits
-2. 其次是POI(采用./Compliance.md中Option C: time-bounded POI retention)的方式
+2. 其次是POI(采用./Compliance.md 中的 time-bounded retained-source PoI model)的方式
 
 
 ## 电路形式化定义
@@ -14,7 +14,7 @@
 2. `shield_transfer`：支持多输入、多输出的私有转账。证明输入 notes 存在、自己拥有这些 notes、输入输出金额守恒，并且所有输出 notes 都正确继承输入 notes 合并后的 source 信息。
 3. `UnshieldPOI`：用户把私有 note 提现回公开地址时，证明该 note 当前仍保留在 slots 中的所有 protocol-entry source 都不在当前 blacklist 中。
 
-这里采用 `./Compliance.md` 中的 Option C: time-bounded POI retention with retained-slot strict verification。也就是说，`T` 只决定哪些 source 会被复制到新创建的 note 中；但对于某个当前 note 里仍然保留着的 source slot，无论它是否已经超过 `T` 个 epoch，只要它还没被 prune 掉，在 `shield_transfer` 或 `unshield` 时都必须证明其不在 blacklist 中。
+这里采用 `./Compliance.md` 中的 time-bounded retained-source PoI model with retained-slot strict verification。也就是说，`T` 只决定哪些 source 会被复制到新创建的 note 中；但对于某个当前 note 里仍然保留着的 source slot，无论它是否已经超过 `T` 个 epoch，只要它还没被 prune 掉，在 `shield_transfer` 或 `unshield` 时都必须证明其不在 blacklist 中。
 
 为了支持多输入、多输出的 `shield_transfer`，每个 note 不再只绑定一个 source，而是绑定一个固定长度为 `K` 的 source 数组。数组不足 `K` 时使用 padding 补齐。
 
@@ -203,7 +203,7 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
 
 两种方案的 `VerifyNonMembership` 接口一致，选择哪种不影响其余电路定义。
 
-### 4. Option C 的状态语义
+### 4. time-bounded retained-source PoI model 的状态语义
 
 对一笔在 epoch `e` 执行的 transfer，定义原始输入 source 列表 `U_raw` 的输出保留过滤：
 
@@ -235,7 +235,7 @@ SMT 的树深度固定为 key 的比特宽度（`srcId` 为 64 bits → 深度 6
 
 * `enterEpoch` 不是唯一值，多个 source 完全可能在同一个 epoch 进入协议，因此无法要求它“严格递增”
 * retained-slot strict 的语义是“新输出只保留仍活跃的 source，但当前 note 已保留的 source 都要接受检查”，而不是“优先保留最新的 source”
-* 如果在 source 数超过 `K` 时按 `enterEpoch` 只保留较新的那些 source，那么语义会从 Option C 退化成一种按新旧裁剪的混合模型
+* 如果在 source 数超过 `K` 时按 `enterEpoch` 只保留较新的那些 source，那么语义会从当前的 time-bounded retained-source PoI model 退化成一种按新旧裁剪的混合模型
 
 因此当前版本中，`enterEpoch` 只用于判断 source 在 transfer 时是否仍应被复制到新输出里，不用于决定 overflow 时该保留谁，也不用于豁免当前已保留 slots 的 blacklist 检查；若活跃 source 数超过 `K`，proof 直接失败。
 

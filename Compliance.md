@@ -189,7 +189,7 @@ Those are not equivalent when blacklist membership can change over time. Accordi
 
 This option is the stronger long-term architecture if the system wants to support arbitrary transfer depth while preserving compact note state, but it requires a recursive proving stack and a much more precise definition of certificate semantics.
 
-#### Option C: time-bounded POI retention with retained-slot strict verification
+#### Option C: Time-bounded retained-source PoI model with retained-slot strict verification
 
 The third improvement is to prune proof-of-innocence data with a time rule while keeping verification strict over every source that is still retained in the note state.
 

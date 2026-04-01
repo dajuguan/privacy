@@ -122,7 +122,7 @@ template ShieldASP(D_DEP, D_BLK, K) {
     component note = NoteCommit();
     note.amount <== amount;
     note.ownerCommit <== ownerCommit.out;
-    // Option C v1 sets rho = depositSecret for notes created from deposits.
+    // This model sets rho = depositSecret for notes created from deposits.
     note.rho <== depositSecret;
     note.sourcesRoot <== slotsRoot.root;
     note.out === noteCommit;

@@ -8,7 +8,8 @@ include "./lib/slots.circom";
 include "./lib/transfer_merge.circom";
 include "../node_modules/circomlib/circuits/comparators.circom";
 
-// ShieldTransfer implements retained-slot strict Option C semantics.
+// ShieldTransfer implements retained-slot strict semantics for the
+// time-bounded retained-source PoI model.
 //
 // D_NOTE is the binary note-tree depth, so each used input note supplies a
 // path of exactly D_NOTE siblings and D_NOTE direction bits.
